@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using DG.Tweening;
 using Unity.Mathematics;
@@ -29,6 +31,10 @@ partial class Swiper : VisualElement
     [UxmlAttribute("CloseTexture"), Tooltip("閉じるボタンのテクスチャ")]
     Texture2D closeTexture;
 
+    public event Action OnShow;
+    public event Action OnHide;
+    public event Action OnSwipe;
+
     VisualElement rightArrow;
     VisualElement leftArrow;
     VisualElement close;
@@ -36,10 +42,12 @@ partial class Swiper : VisualElement
     VisualElement swipeContainer;
     VisualElement scrollElement;
     List<TemplateContainer> swipeElementList; 
-    EventCallback<MouseMoveEvent> mouseMoveCallback;
-    EventCallback<MouseOutEvent> mouseOutCallback;
+    EventCallback<PointerMoveEvent> pointerMoveCallback;
+    EventCallback<PointerUpEvent> pointerUpCallback;
+    EventCallback<PointerLeaveEvent> pointerLeaveCallback;
     CancellationTokenSource cts;
     float deltaX;
+    string pointerType;
     int index;
 
     public Swiper()
@@ -85,10 +93,10 @@ partial class Swiper : VisualElement
         };
         swipeContainer.AddToClassList("swiper-container");
         swiperElement.Add(swipeContainer);
-        swipeContainer.RegisterCallback<MouseDownEvent>((e) => { OnMouseDownEvent(e); });
-        swipeContainer.RegisterCallback<MouseUpEvent>((e) => { OnMouseUpEvent(); });
-        mouseMoveCallback = (e) => { OnMouseMovedEvent(e); };
-        mouseOutCallback = (e) => { OnMouseUpEvent(); };
+        swipeContainer.RegisterCallback<PointerDownEvent>((e) => { OnPointerDownEvent(e); });
+        pointerMoveCallback = (e) => { OnPointerMovedEvent(e); };
+        pointerUpCallback = (e) => { OnPointerUpEvent(e); };
+        pointerLeaveCallback = (e) => { OnPointerUpEvent(e); };
 
         scrollElement = new VisualElement{
             name = "ScrollElement",
@@ -154,29 +162,34 @@ partial class Swiper : VisualElement
         CreateSlide();
     }
 
-    private void OnMouseDownEvent(MouseDownEvent e)
+    private void OnPointerDownEvent(PointerDownEvent e)
     {
-        swipeContainer.RegisterCallback(mouseMoveCallback);
-        this.RegisterCallback(mouseOutCallback);
+        swipeContainer.RegisterCallback(pointerMoveCallback);
+        this.RegisterCallback(pointerLeaveCallback);
+        this.RegisterCallback(pointerUpCallback);
 
-        deltaX = e.localMousePosition.x;
+        pointerType = e.pointerType;
+        deltaX = e.localPosition.x;
         cts.Cancel();
     }
 
-    private void OnMouseMovedEvent(MouseMoveEvent e)
+    private void OnPointerMovedEvent(PointerMoveEvent e)
     {
         scrollElement.style.translate = new StyleTranslate
         (
-            new Translate(new Length(scrollElement.resolvedStyle.translate.x + (e.localMousePosition.x - deltaX), LengthUnit.Pixel), 0, 0)
+            new Translate(new Length(scrollElement.resolvedStyle.translate.x + (e.localPosition.x - deltaX), LengthUnit.Pixel), 0, 0)
         );
 
-        deltaX = e.localMousePosition.x;
+        deltaX = e.localPosition.x;
     }
 
-    private void OnMouseUpEvent()
+    private void OnPointerUpEvent<T>(T e) where T : PointerEventBase<T>, new()
     {
-        swipeContainer.UnregisterCallback(mouseMoveCallback);
-        this.UnregisterCallback(mouseOutCallback);
+        if (pointerType != e.pointerType) return;
+
+        swipeContainer.UnregisterCallback(pointerMoveCallback);
+        this.UnregisterCallback(pointerLeaveCallback);
+        this.UnregisterCallback(pointerUpCallback);
 
         int index = Mathf.RoundToInt(scrollElement.resolvedStyle.translate.x * -1 / scrollElement.resolvedStyle.width);
         Swipe(math.clamp(index, 0, swipeElementList.Count - 1));
@@ -213,6 +226,7 @@ partial class Swiper : VisualElement
     public void Show()
     {
         this.style.display = DisplayStyle.Flex;
+        OnShow?.Invoke();
     }
 
     /// <summary>
@@ -222,6 +236,7 @@ partial class Swiper : VisualElement
     {
         this.style.display = DisplayStyle.None;
         Swipe(0);
+        OnHide?.Invoke();
     }
 
     /// <summary>
@@ -231,6 +246,8 @@ partial class Swiper : VisualElement
     public void Swipe(int newIndex)
     {
         if (index < 0 || index >= swipeElementList.Count) return;
+
+        if (this.style.display != DisplayStyle.None && index != newIndex) OnSwipe?.Invoke();
 
         index = newIndex;
 
